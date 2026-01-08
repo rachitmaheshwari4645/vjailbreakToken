@@ -10,3 +10,4 @@ spec:
   OS_PASSWORD: 
   OS_REGION_NAME: 
   OS_TENANT_NAME: 
+  OS_TOKEN:
