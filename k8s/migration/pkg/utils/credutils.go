@@ -144,11 +144,6 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 			}
 		}
 	}
-	// for key, value := range fields {
-	// 	if value == "" {
-	// 		return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
-	// 	}
-	// }
 
 	insecureStr := string(secret.Data["OS_INSECURE"])
 	insecure := strings.EqualFold(strings.TrimSpace(insecureStr), trueString)
