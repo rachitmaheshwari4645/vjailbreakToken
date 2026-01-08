@@ -3,14 +3,16 @@ import React, { useState, useImperativeHandle, forwardRef } from 'react'
 import { ActionButton, FieldLabel } from 'src/components'
 import { TextField } from 'src/shared/components/forms'
 
-const requiredFields = [
+const BaseRequiredFields = [
   'OS_AUTH_URL',
   'OS_DOMAIN_NAME',
-  'OS_USERNAME',
-  'OS_PASSWORD',
   'OS_REGION_NAME',
   'OS_TENANT_NAME'
-]
+  ];
+  const PasswordAuthFields = [
+  'OS_USERNAME',
+  'OS_PASSWORD'
+  ];
 
 const FileUploadFieldContainer = styled('div')(({ theme }) => ({
   display: 'grid',
@@ -111,14 +113,13 @@ const OpenstackRCFileUploader = forwardRef<
   }
 
   const validateFields = (fields: Record<string, string>) => {
-    const missingFields = requiredFields.filter(
-      (field) => !fields[field] || fields[field].trim() === ''
+      const hasToken = fields['OS_TOKEN'] && fields['OS_TOKEN'].trim() !== '';
+      const dynamicRequiredFields = hasToken? BaseRequiredFields : [...BaseRequiredFields, ...PasswordAuthFields]; // Token auth
+      const missingFields = dynamicRequiredFields.filter((field) => !fields[field] || fields[field].trim() === ''
     )
-    if (missingFields.length > 0) {
-      setError(`Missing required fields: ${missingFields.join(', ')}`)
-      return false
+    return {
+      valid: missingFields.length === 0,
     }
-    return true
   }
 
   return (

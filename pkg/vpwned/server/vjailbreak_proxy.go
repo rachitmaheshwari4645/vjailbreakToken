@@ -160,14 +160,31 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"OS_TOKEN":   string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			logrus.WithFields(logrus.Fields{"func": fn, "missing_field": key, "secret": secretName}).Error("Missing field in OpenStack secret")
-			return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	if fields["TokenId"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "TokenId" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
+	// for key, value := range fields {
+	// 	if value == "" {
+	// 		logrus.WithFields(logrus.Fields{"func": fn, "missing_field": key, "secret": secretName}).Error("Missing field in OpenStack secret")
+	// 		return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	// 	}
+	// }
 
 	insecureStr := string(secret.Data["OS_INSECURE"])
 	insecure := strings.EqualFold(strings.TrimSpace(insecureStr), "true")
@@ -180,6 +197,7 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		RegionName: fields["RegionName"],
 		TenantName: fields["TenantName"],
 		Insecure:   insecure,
+		Token:      fields["OS_TOKEN"],
 	}, nil
 }
 
@@ -530,10 +548,10 @@ func (p *vjailbreakProxy) InjectEnvVariables(ctx context.Context, in *api.Inject
 	}
 
 	// If at least one of http_proxy or https_proxy is present, ensure .svc,.cluster.local,localhost,127.0.0.1,169.254.169.254,10.43.0.0/16 is in no_proxy
-	if (httpProxy != "" || httpsProxy != "") {
+	if httpProxy != "" || httpsProxy != "" {
 		requiredNoProxyValues := []string{".svc", ".cluster.local", "localhost", "127.0.0.1", "169.254.169.254", "10.43.0.0/16"}
 		noProxyList := []string{}
-		
+
 		if noProxy != "" {
 			noProxyList = strings.Split(noProxy, ",")
 			// Trim spaces from each entry
@@ -541,7 +559,7 @@ func (p *vjailbreakProxy) InjectEnvVariables(ctx context.Context, in *api.Inject
 				noProxyList[i] = strings.TrimSpace(noProxyList[i])
 			}
 		}
-		
+
 		// Check and add missing values
 		for _, required := range requiredNoProxyValues {
 			found := false
@@ -559,7 +577,7 @@ func (p *vjailbreakProxy) InjectEnvVariables(ctx context.Context, in *api.Inject
 				}).Info("Auto-appending value to no_proxy")
 			}
 		}
-		
+
 		// Reconstruct no_proxy
 		noProxy = strings.Join(noProxyList, ",")
 		logrus.WithFields(logrus.Fields{
@@ -601,12 +619,12 @@ func (p *vjailbreakProxy) InjectEnvVariables(ctx context.Context, in *api.Inject
 		if existingCM.Data == nil {
 			existingCM.Data = make(map[string]string)
 		}
-		
+
 		// Update or add non-empty values
 		for key, value := range envData {
 			existingCM.Data[key] = value
 		}
-		
+
 		// Delete keys when empty values are sent
 		if in.GetHttpProxy() == "" {
 			delete(existingCM.Data, "http_proxy")
@@ -625,7 +643,7 @@ func (p *vjailbreakProxy) InjectEnvVariables(ctx context.Context, in *api.Inject
 			delete(existingCM.Data, "no_proxy")
 			logrus.WithField("func", fn).Info("Deleting no_proxy from ConfigMap")
 		}
-		
+
 		if err := k8sClient.Update(ctx, existingCM); err != nil {
 			logrus.WithFields(logrus.Fields{"func": fn, "configmap": configMapName}).WithError(err).Error("Failed to update existing ConfigMap")
 			return &api.InjectEnvVariablesResponse{

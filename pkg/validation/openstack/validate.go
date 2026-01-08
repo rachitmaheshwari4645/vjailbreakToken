@@ -74,12 +74,21 @@ func Validate(ctx context.Context, k8sClient client.Client, openstackcreds *vjai
 	providerClient.HTTPClient = *vjbNet.GetClient()
 
 	// Authenticate
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint: openstackCredential.AuthURL,
-		Username:         openstackCredential.Username,
-		Password:         openstackCredential.Password,
-		DomainName:       openstackCredential.DomainName,
-		TenantName:       openstackCredential.TenantName,
+	var authOpts gophercloud.AuthOptions
+	if openstackCredential.Token != "" {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			TokenID:          openstackCredential.Token,
+			DomainName:       openstackCredential.DomainName,
+		}
+	} else {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			Username:         openstackCredential.Username,
+			Password:         openstackCredential.Password,
+			DomainName:       openstackCredential.DomainName,
+			TenantName:       openstackCredential.TenantName,
+		}
 	}
 	if err := openstack.Authenticate(ctx, providerClient, authOpts); err != nil {
 		var message string
@@ -133,6 +142,7 @@ func getCredentialsFromSecret(ctx context.Context, k8sClient client.Client, secr
 		return openstackCredsInfo, errors.Wrap(err, "failed to get secret")
 	}
 
+	log.Print("secret = ", secret.Data)
 	fields := map[string]string{
 		"AuthURL":    string(secret.Data["OS_AUTH_URL"]),
 		"DomainName": string(secret.Data["OS_DOMAIN_NAME"]),
@@ -140,11 +150,24 @@ func getCredentialsFromSecret(ctx context.Context, k8sClient client.Client, secr
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"Token":      string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			return openstackCredsInfo, fmt.Errorf("field %s is empty or missing in secret", key)
+	// If Token is provided, only AuthURL, DomainName, TenantName, and RegionName are required
+	if fields["Token"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return openstackCredsInfo,
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "Token" {
+				return openstackCredsInfo,
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
 
@@ -154,7 +177,7 @@ func getCredentialsFromSecret(ctx context.Context, k8sClient client.Client, secr
 	openstackCredsInfo.DomainName = fields["DomainName"]
 	openstackCredsInfo.TenantName = fields["TenantName"]
 	openstackCredsInfo.RegionName = fields["RegionName"]
-
+	openstackCredsInfo.Token = fields["Token"]
 	insecureStr := string(secret.Data["OS_INSECURE"])
 	openstackCredsInfo.Insecure = strings.EqualFold(strings.TrimSpace(insecureStr), "true")
 

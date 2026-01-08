@@ -3,13 +3,14 @@ kind: OpenstackCreds
 metadata:
   name: sapmo1
 spec:
-  OS_AUTH_URL: "https://keystone.example.com:5000/v3"  # Replace with actual auth URL
+  OS_AUTH_URL: "http://192.168.4.202"  # Replace with actual auth URL
   OS_DOMAIN_NAME: Default
-  OS_USERNAME: "some-username"  # Replace with actual username
-  OS_PASSWORD: "some-password"  # Replace with actual password
+  OS_USERNAME: "rachit"  # Replace with actual username
+  OS_PASSWORD: "rachit@123"  # Replace with actual password
   OS_REGION_NAME: cspmo
   OS_TENANT_NAME: service
----
+  OS_TOKEN: "dummy-OS_TOKEN"  #Replace with actaul Token
+
 apiVersion: vjailbreak.k8s.pf9.io/v1alpha1
 kind: VMwareCreds
 metadata:

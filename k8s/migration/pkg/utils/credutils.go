@@ -125,13 +125,30 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"TokenId":    string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	if fields["TokenId"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "TokenId" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
+	// for key, value := range fields {
+	// 	if value == "" {
+	// 		return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	// 	}
+	// }
 
 	insecureStr := string(secret.Data["OS_INSECURE"])
 	insecure := strings.EqualFold(strings.TrimSpace(insecureStr), trueString)
@@ -143,6 +160,7 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		Password:   fields["Password"],
 		RegionName: fields["RegionName"],
 		TenantName: fields["TenantName"],
+		Token:      fields["TokenId"],
 		Insecure:   insecure,
 	}, nil
 }
@@ -428,13 +446,24 @@ func ValidateAndGetProviderClient(ctx context.Context, k3sclient client.Client,
 		return nil, fmt.Errorf("failed to create secure HTTP client")
 	}
 
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint: openstackCredential.AuthURL,
-		Username:         openstackCredential.Username,
-		Password:         openstackCredential.Password,
-		DomainName:       openstackCredential.DomainName,
-		TenantName:       openstackCredential.TenantName,
+	// Authenticate
+	var authOpts gophercloud.AuthOptions
+	if openstackCredential.Token != "" {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			TokenID:          openstackCredential.Token,
+			DomainName:       openstackCredential.DomainName,
+		}
+	} else {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			Username:         openstackCredential.Username,
+			Password:         openstackCredential.Password,
+			DomainName:       openstackCredential.DomainName,
+			TenantName:       openstackCredential.TenantName,
+		}
 	}
+
 	if err := openstack.Authenticate(ctx, providerClient, authOpts); err != nil {
 		switch {
 		case strings.Contains(err.Error(), "401"):
@@ -681,11 +710,11 @@ func GetAndCreateAllVMs(ctx context.Context, scope *scope.VMwareCredsScope, data
 	// Create a semaphore to limit concurrent goroutines
 	semaphore := make(chan struct{}, vjailbreakSettings.VCenterScanConcurrencyLimit)
 	rdmDiskMap := &sync.Map{}
-	
-	// Collect all VMs from all target datacenters 
+
+	// Collect all VMs from all target datacenters
 	allVMs := make([]*object.VirtualMachine, 0)
 	vmToDatacenter := make(map[string]string)
-	
+
 	c, err := ValidateVMwareCreds(ctx, scope.Client, scope.VMwareCreds)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get client: %w", err)
@@ -699,7 +728,7 @@ func GetAndCreateAllVMs(ctx context.Context, scope *scope.VMwareCredsScope, data
 			continue
 		}
 		finder.SetDatacenter(dc)
-		
+
 		vms, err := finder.VirtualMachineList(ctx, "*")
 		if err != nil {
 			log.Error(err, "failed to get vms from datacenter, skipping", "datacenter", dcName)

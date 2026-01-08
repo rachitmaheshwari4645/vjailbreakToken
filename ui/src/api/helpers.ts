@@ -104,6 +104,7 @@ export const createOpenstackCredsWithSecretFlow = async (
     OS_DOMAIN_NAME: string
     OS_REGION_NAME?: string
     OS_INSECURE?: boolean
+    OS_TOKEN:string
   },
   isPcd: boolean = false,
   projectName: string,

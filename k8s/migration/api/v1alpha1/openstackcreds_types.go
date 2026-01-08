@@ -51,6 +51,8 @@ type OpenStackCredsInfo struct {
 	Insecure bool
 	// DomainName is the OpenStack domain
 	DomainName string
+	// Token is a Openstack token
+	Token string
 }
 
 // SecurityGroupInfo holds the security group name and ID
@@ -62,10 +64,10 @@ type SecurityGroupInfo struct {
 
 // ServerGroupInfo holds the server group name, ID, and policy information
 type ServerGroupInfo struct {
-	Name     string `json:"name"`
-	ID       string `json:"id"`
-	Policy   string `json:"policy"`  // affinity, anti-affinity, soft-affinity, soft-anti-affinity
-	Members  int    `json:"members,omitempty"`
+	Name    string `json:"name"`
+	ID      string `json:"id"`
+	Policy  string `json:"policy"` // affinity, anti-affinity, soft-affinity, soft-anti-affinity
+	Members int    `json:"members,omitempty"`
 }
 
 // OpenstackInfo contains information about OpenStack environment resources including available volume types and networks

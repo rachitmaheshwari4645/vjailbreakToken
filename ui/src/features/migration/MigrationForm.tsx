@@ -81,6 +81,7 @@ export interface FormValues extends Record<string, unknown> {
     existingCredName?: string
     credentialName?: string
     OS_INSECURE?: boolean
+    OS_TOKEN: string
   }
   vms?: VmData[]
   rdmConfigurations?: Array<{

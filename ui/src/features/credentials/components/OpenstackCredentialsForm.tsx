@@ -17,6 +17,7 @@ export interface OpenstackCredential {
     secretRef?: {
       name: string
     }
+    OS_TOKEN?: string
   }
   status?: {
     openstackValidationStatus?: string
