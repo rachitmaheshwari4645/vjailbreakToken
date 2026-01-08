@@ -90,7 +90,7 @@ var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Generate Kubernetes Pod and ConfigMap YAML",
 	Long: `Generate Kubernetes Pod and ConfigMap YAML based on user input and admin.rc file and start the migration. 
-Your admin.rc file should atleast contain the following keys: OS_AUTH_URL, OS_DOMAIN_NAME, OS_TENANT_NAME, OS_USERNAME, OS_PASSWORD.`,
+Your admin.rc file should atleast contain the following keys: OS_AUTH_URL, OS_DOMAIN_NAME, OS_TENANT_NAME, OS_USERNAME, OS_PASSWORD,OS_TOKEN.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if kubectl exists
 		_, err := exec.LookPath("kubectl")
@@ -202,8 +202,29 @@ Your admin.rc file should atleast contain the following keys: OS_AUTH_URL, OS_DO
 			log.Fatalf("Error reading admin file: %v", err)
 		}
 
-		openStackEnvVars := []string{"OS_AUTH_URL", "OS_DOMAIN_NAME", "OS_TENANT_NAME", "OS_USERNAME", "OS_PASSWORD", "OS_REGION_NAME"}
-		for _, env := range openStackEnvVars {
+		openStackBaseVars := []string{
+			"OS_AUTH_URL",
+			"OS_DOMAIN_NAME",
+			"OS_TENANT_NAME",
+			"OS_REGION_NAME",
+		}
+		// username/password auth vars
+		passwordAuthVars := []string{
+			"OS_USERNAME",
+			"OS_PASSWORD",
+		}
+		// check if token exists
+		token, tokenPresent := adminConfig["OS_TOKEN"]
+
+		// build list of required fields dynamically
+		requiredVars := openStackBaseVars
+
+		if !tokenPresent || strings.TrimSpace(token) == "" {
+			// token not present -> require username + password
+			requiredVars = append(requiredVars, passwordAuthVars...)
+		}
+
+		for _, env := range requiredVars {
 			value, ok := adminConfig[env]
 			if !ok {
 				log.Fatalf("Missing key %s in admin file", env)
