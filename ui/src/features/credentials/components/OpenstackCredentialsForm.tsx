@@ -14,6 +14,7 @@ export interface OpenstackCredential {
     OS_PASSWORD?: string
     OS_REGION_NAME?: string
     OS_TENANT_NAME?: string
+    OS_TOKEN?: string
     secretRef?: {
       name: string
     }

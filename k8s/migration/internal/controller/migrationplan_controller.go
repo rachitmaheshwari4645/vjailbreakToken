@@ -1430,12 +1430,15 @@ func (r *MigrationPlanReconciler) TriggerMigration(ctx context.Context,
 	if err != nil {
 		return errors.Wrap(err, "failed to list nodes")
 	}
+	ctxlog.Info("Node count for parallel migrations", "nodes", nodeList.Items)
+	ctxlog.Info("Starting migration for VMs", "totalVMs", len(parallelvms), "parallelism", len(nodeList.Items))
 	counter := len(nodeList.Items)
 	for _, vmMachineObj := range parallelvms {
 		if vmMachineObj == nil {
-			return errors.Wrapf(err, "VM '%s' not found in VMwareMachine", vmMachineObj.Name)
+			return errors.Wrapf(err, "VM not found in VMwareMachine")
 		}
 		vm := vmMachineObj.Spec.VMInfo.Name
+		ctxlog.Info("Flavour", "flavour", migrationtemplate.Spec.UseFlavorless)
 		if migrationtemplate.Spec.UseFlavorless {
 			ctxlog.Info("Flavorless migration detected, attempting to auto-discover base flavor.")
 
@@ -1464,7 +1467,7 @@ func (r *MigrationPlanReconciler) TriggerMigration(ctx context.Context,
 				ctxlog.Info("Patched VMwareMachine with base flavor ID", "vmwareMachine", vmMachineObj.Name, "flavorID", baseFlavor.ID)
 			}
 		}
-
+		ctxlog.Info("Triggering migration for VM", "vm", vm)
 		migrationobj, err := r.CreateMigration(ctx, migrationplan, vm, vmMachineObj)
 		if err != nil {
 			if apierrors.IsAlreadyExists(err) && migrationobj.Status.Phase == vjailbreakv1alpha1.VMMigrationPhaseSucceeded {
@@ -1486,7 +1489,16 @@ func (r *MigrationPlanReconciler) TriggerMigration(ctx context.Context,
 		if err = r.validateVDDKPresence(ctx, migrationobj, ctxlog); err != nil {
 			return err
 		}
-
+		// if arraycreds.Spec.SecretRef.Name == "" {
+		// 	ctxlog.Info("Skipping Job creation as ArrayCreds secret reference is empty")
+		// } else {
+		// 	ctxlog.Info("Creating Job for VM", "arraycreds.Spec.SecretRef.Name", arraycreds.Spec.SecretRef.Name)
+		// }
+		arraycredsSecretRef := ""
+		if arraycreds != nil {
+			arraycredsSecretRef = arraycreds.Spec.SecretRef.Name
+		}
+		// ctxlog.Info("arraycreds.Spec.SecretRef", "arraycreds.Spec.SecretRef", arraycreds.Spec.SecretRef)
 		err = r.CreateJob(ctx,
 			migrationplan,
 			migrationtemplate,
@@ -1496,7 +1508,7 @@ func (r *MigrationPlanReconciler) TriggerMigration(ctx context.Context,
 			vmwcreds.Spec.SecretRef.Name,
 			openstackcreds.Spec.SecretRef.Name,
 			vmMachineObj,
-			arraycreds.Spec.SecretRef.Name)
+			arraycredsSecretRef)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("failed to create Job for VM %s", vm))
 		}

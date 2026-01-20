@@ -4131,7 +4131,7 @@ spec:
         envFrom:
         - configMapRef:
             name: pf9-env
-        image: quay.io/platform9/vjailbreak-controller:v0.3.8
+        image: quay.io/platform9/vjailbreak-controller:99.99.99-b512bef
         imagePullPolicy: IfNotPresent
         lifecycle:
           preStop:
@@ -4214,7 +4214,7 @@ spec:
       - envFrom:
         - configMapRef:
             name: pf9-env
-        image: quay.io/platform9/vjailbreak-vpwned:v0.3.8
+        image: quay.io/platform9/vjailbreak-vpwned:99.99.99-b512bef
         imagePullPolicy: IfNotPresent
         name: vpwned
         ports:

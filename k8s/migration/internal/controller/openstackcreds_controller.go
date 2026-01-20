@@ -306,7 +306,7 @@ func (r *OpenstackCredsReconciler) createArrayCreds(ctx context.Context, scope *
 				CinderHost:        backendInfo["cinderHost"],
 			},
 			SecretRef: corev1.ObjectReference{
-				Name:      "", // Empty - awaiting user input
+				Name:      fmt.Sprintf("%s-openstack-secret", scope.OpenstackCreds.Name), // Empty - awaiting user input
 				Namespace: constants.NamespaceMigrationSystem,
 			},
 		},

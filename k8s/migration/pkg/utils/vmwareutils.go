@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // GetClusterK8sID returns a unified identifier for a cluster
@@ -42,6 +43,8 @@ func GetVMwareClustersAndHosts(ctx context.Context, scope *scope.VMwareCredsScop
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get vCenter credentials")
 	}
+	log := log.FromContext(ctx)
+	log.Info("Creating VMware Host", "hostk8sName", vmwarecreds)
 
 	_, finder, err := GetFinderForVMwareCreds(ctx, scope.Client, scope.VMwareCreds, "")
 	if err != nil {
@@ -62,7 +65,7 @@ func GetVMwareClustersAndHosts(ctx context.Context, scope *scope.VMwareCredsScop
 			return nil, errors.Wrap(err, "failed to list all datacenters")
 		}
 	}
-
+	log.Info("targetDatacenters ", "targetDatacenters", targetDatacenters)
 	// Iterate over each datacenter to find clusters
 	for _, dc := range targetDatacenters {
 		finder.SetDatacenter(dc)
@@ -73,7 +76,7 @@ func GetVMwareClustersAndHosts(ctx context.Context, scope *scope.VMwareCredsScop
 			}
 			return nil, errors.Wrapf(err, "failed to get cluster list for datacenter %s", dc.Name())
 		}
-
+		log.Info("Cluster List is ", "ClusterList", clusterList)
 		for _, cluster := range clusterList {
 			var clusterProperties mo.ClusterComputeResource
 			err := cluster.Properties(ctx, cluster.Reference(), []string{"name"}, &clusterProperties)
@@ -93,12 +96,74 @@ func GetVMwareClustersAndHosts(ctx context.Context, scope *scope.VMwareCredsScop
 				}
 				vmHosts = append(vmHosts, VMwareHostInfo{Name: host.Name(), HardwareUUID: hostSummary.Summary.Hardware.Uuid})
 			}
+			log.Info("VM Hosts are ", "VMHosts", vmHosts)
+			log.Info("ClusterProperties are ", "ClusterProperties", clusterProperties)
 			clusters = append(clusters, VMwareClusterInfo{
 				Name:       clusterProperties.Name,
 				Hosts:      vmHosts,
 				Datacenter: dc.Name(),
 			})
 		}
+
+		// computeResourceList, err := finder.ComputeResourceList(ctx, "*")
+		// if err != nil {
+		// 	if strings.Contains(err.Error(), "not found") {
+		// 		continue
+		// 	}
+		// 	return nil, errors.Wrapf(err, "failed to get compute resource list for datacenter %s", dc.Name())
+		// }
+
+		// processedClusterNames := make(map[string]bool)
+		// for _, cluster := range clusters {
+		// 	if cluster.Datacenter == dc.Name() {
+		// 		processedClusterNames[cluster.Name] = true
+		// 	}
+		// }
+
+		// for _, computeResource := range computeResourceList {
+		// 	// Skip ClusterComputeResource objects as they are already processed above
+		// 	if computeResource.Reference().Type == "ClusterComputeResource" {
+		// 		continue
+		// 	}
+
+		// 	var computeProperties mo.ComputeResource
+		// 	err := computeResource.Properties(ctx, computeResource.Reference(), []string{"name"}, &computeProperties)
+		// 	if err != nil {
+		// 		scope.Logger.Info("Failed to get ComputeResource properties", "error", err.Error())
+		// 		continue
+		// 	}
+
+		// 	// Skip if this ComputeResource is already processed as a ClusterComputeResource (extra safety check)
+		// 	if processedClusterNames[computeProperties.Name] {
+		// 		continue
+		// 	}
+
+		// 	hosts, err := computeResource.Hosts(ctx)
+		// 	if err != nil {
+		// 		scope.Logger.Info("Failed to get hosts for ComputeResource", "computeResource", computeProperties.Name, "error", err.Error())
+		// 		continue
+		// 	}
+
+		// 	// Only create Cluster CR if there are hosts
+		// 	if len(hosts) > 0 {
+		// 		var vmHosts []VMwareHostInfo
+		// 		for _, host := range hosts {
+		// 			hostSummary, err := GetESXiSummary(ctx, scope.Client, host.Name(), scope.VMwareCreds, dc.Name())
+		// 			if err != nil {
+		// 				scope.Logger.Info("Failed to get ESXi summary for host", "host", host.Name(), "error", err.Error())
+		// 				continue
+		// 			}
+		// 			vmHosts = append(vmHosts, VMwareHostInfo{Name: host.Name(), HardwareUUID: hostSummary.Summary.Hardware.Uuid})
+		// 		}
+		// 		if len(vmHosts) > 0 {
+		// 			clusters = append(clusters, VMwareClusterInfo{
+		// 				Name:       computeProperties.Name,
+		// 				Hosts:      vmHosts,
+		// 				Datacenter: dc.Name(),
+		// 			})
+		// 		}
+		// 	}
+		// }
 	}
 	return clusters, nil
 }
@@ -109,16 +174,19 @@ func createVMwareHost(ctx context.Context, scope *scope.VMwareCredsScope, host V
 	if err != nil {
 		return "", errors.Wrap(err, "failed to convert host name to k8s name")
 	}
-
+	log := log.FromContext(ctx)
+	log.Info("Creating VMware Host", "hostk8sName", hostk8sName)
+	log.Info("Cluster Name is ", "ClusterName", clusterName)
 	clusterK8sID := clusterName
 	if datacenter != "" {
 		clusterK8sID = fmt.Sprintf("%s-%s", clusterName, datacenter)
 	}
+	log.Info("Creating VMware Host", "clusterK8sID", clusterK8sID)
 	clusterk8sName, err := GetK8sCompatibleVMWareObjectName(clusterK8sID, credName)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to convert cluster name to k8s name")
 	}
-
+	log.Info("Creating VMware Host Name", "clusterName", clusterk8sName)
 	labels := map[string]string{
 		constants.VMwareClusterLabel: clusterk8sName,
 		constants.VMwareCredsLabel:   credName,
@@ -168,10 +236,14 @@ func createVMwareCluster(ctx context.Context, scope *scope.VMwareCredsScope, clu
 
 	clusterK8sID := GetClusterK8sID(cluster.Name, cluster.Datacenter)
 
+	log.Info("Creating VMware cluster", "clusterK8sID", clusterK8sID)
+
 	clusterk8sName, err := GetK8sCompatibleVMWareObjectName(clusterK8sID, scope.Name())
 	if err != nil {
 		return errors.Wrap(err, "failed to convert cluster name to k8s name")
 	}
+
+	log.Info("Creating VMware Name", "clusterName", clusterk8sName)
 
 	labels := map[string]string{
 		constants.VMwareCredsLabel: scope.Name(),
@@ -243,7 +315,7 @@ func CreateVMwareClustersAndHosts(ctx context.Context, scope *scope.VMwareCredsS
 	if err != nil {
 		return errors.Wrap(err, "failed to get clusters and hosts")
 	}
-
+	log.Info("Cluster Name is ", "ClusterName", clusters)
 	// Create a dummy cluster for standalone ESX
 	if err := CreateDummyClusterForStandAloneESX(ctx, scope, clusters); err != nil {
 		return errors.Wrap(err, "failed to create dummy cluster for standalone ESX")
@@ -386,6 +458,7 @@ func FilterVMwareHostsForCluster(ctx context.Context, k8sClient client.Client, c
 
 // FetchStandAloneESXHostsFromVcenter fetches standalone ESX hosts from vCenter
 func FetchStandAloneESXHostsFromVcenter(ctx context.Context, scope *scope.VMwareCredsScope, clusters []VMwareClusterInfo) (map[string][]*object.HostSystem, error) {
+	log := log.FromContext(ctx)
 	// Create a map of all hosts that are part of clusters for O(1) lookups
 	clusteredHosts := make(map[string]bool)
 	for _, cluster := range clusters {
@@ -393,7 +466,7 @@ func FetchStandAloneESXHostsFromVcenter(ctx context.Context, scope *scope.VMware
 			clusteredHosts[host.Name] = true
 		}
 	}
-
+	log.Info("Cluster Host = ", "clusterHost", clusteredHosts)
 	// Get VMware credentials to connect to vCenter
 	vmwareCredsInfo, err := GetVMwareCredentialsFromSecret(ctx, scope.Client, scope.VMwareCreds.Spec.SecretRef.Name)
 	if err != nil {
@@ -405,7 +478,7 @@ func FetchStandAloneESXHostsFromVcenter(ctx context.Context, scope *scope.VMware
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get finder for vCenter credentials")
 	}
-
+	log.Info("Fetching standalone ESX hosts from vCenter", "creds", vmwareCredsInfo)
 	var targetDatacenters []*object.Datacenter
 	if vmwareCredsInfo.Datacenter != "" {
 		dc, err := finder.Datacenter(ctx, vmwareCredsInfo.Datacenter)
@@ -419,7 +492,7 @@ func FetchStandAloneESXHostsFromVcenter(ctx context.Context, scope *scope.VMware
 			return nil, errors.Wrap(err, "failed to list all datacenters")
 		}
 	}
-
+	log.Info("tARGET dATACENTER2", "targetDataCenter", targetDatacenters)
 	// Result map
 	result := make(map[string][]*object.HostSystem)
 
@@ -434,10 +507,28 @@ func FetchStandAloneESXHostsFromVcenter(ctx context.Context, scope *scope.VMware
 		}
 
 		for _, host := range hostList {
+			log.Info("Host are ", "host", host.Name())
 			// if part of a cluster, skip
 			if clusteredHosts[host.Name()] {
 				continue
 			}
+			// // Check if host has a parent (ComputeResource or ClusterComputeResource)
+			// // Only hosts with NO parent are truly standalone
+			// var hostProps mo.HostSystem
+			// err := host.Properties(ctx, host.Reference(), []string{"parent"}, &hostProps)
+			// if err != nil {
+			// 	scope.Logger.Info("Failed to get host parent properties, treating as standalone", "host", host.Name(), "error", err.Error())
+			// 	// If we can't determine parent, include it as standalone (safe fallback)
+			// 	result[dc.Name()] = append(result[dc.Name()], host)
+			// 	continue
+			// }
+			// log.Info("Is Standalone", "standAlone", hostProps.Parent)
+			// // If host has a parent, it's NOT standalone - skip it
+			// // (It's under a ComputeResource or ClusterComputeResource)
+			// if hostProps.Parent != nil {
+			// 	scope.Logger.Info("Host has parent, skipping from standalone list", "host", host.Name(), "parentType", hostProps.Parent.Type)
+			// 	continue
+			// }
 			result[dc.Name()] = append(result[dc.Name()], host)
 		}
 	}
@@ -453,7 +544,7 @@ func CreateDummyClusterForStandAloneESX(ctx context.Context, scope *scope.VMware
 	if err != nil {
 		return errors.Wrap(err, "failed to get vCenter credentials")
 	}
-
+	log.Info("Fetching standalone ESX hosts from vCenter", "creds", vmwarecreds)
 	_, finder, err := GetFinderForVMwareCreds(ctx, scope.Client, scope.VMwareCreds, "")
 	if err != nil {
 		return errors.Wrap(err, "failed to get finder for vCenter credentials")
@@ -473,8 +564,9 @@ func CreateDummyClusterForStandAloneESX(ctx context.Context, scope *scope.VMware
 			return errors.Wrap(err, "failed to list all datacenters")
 		}
 	}
-
+	log.Info("Target Data Center", "targetDataCenters", targetDatacenters)
 	standAloneHosts, err := FetchStandAloneESXHostsFromVcenter(ctx, scope, existingClusters)
+	log.Info("Standalone ESX hosts fetched", "hosts", standAloneHosts)
 	if err != nil {
 		return errors.Wrap(err, "failed to fetch standalone ESX hosts")
 	}
@@ -482,12 +574,12 @@ func CreateDummyClusterForStandAloneESX(ctx context.Context, scope *scope.VMware
 	for _, dc := range targetDatacenters {
 		dcName := dc.Name()
 		hosts := standAloneHosts[dcName]
-
+		log.Info("Hosts are ", "Host", hosts)
 		dummyClusterInfo := VMwareClusterInfo{
 			Name:       constants.VMwareClusterNameStandAloneESX,
 			Datacenter: dcName,
 		}
-
+		log.Info("Processing standalone ESX hosts for datacenter", "datacenter", dcName, "hostCount", len(hosts))
 		// Convert objects to HostInfo
 		for _, host := range hosts {
 			log.Info("Processing Standalone VMware host", "host", host.Name(), "datacenter", dcName)
@@ -500,7 +592,7 @@ func CreateDummyClusterForStandAloneESX(ctx context.Context, scope *scope.VMware
 				HardwareUUID: hostSummary.Summary.Hardware.Uuid,
 			})
 		}
-
+		log.Info("Dummy Cluster Info", "dummyClusterInfo", dummyClusterInfo)
 		if err := createVMwareCluster(ctx, scope, dummyClusterInfo); err != nil {
 			return err
 		}

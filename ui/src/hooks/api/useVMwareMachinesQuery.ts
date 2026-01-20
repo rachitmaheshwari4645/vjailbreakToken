@@ -52,12 +52,22 @@ export const useVMwareMachinesQuery = ({
       ])
 
       let filteredItems: VMwareMachine[] = vmResponse.items
-
+      if(clusterName){
+        console.warn('Filtering VMs by cluster:', clusterName)
+      }else{
+        console.warn('No cluster filter applied')
+      }
+      if(datacenterName){
+        console.warn('Filtering VMs by datacenter:', datacenterName)
+      }else{
+        console.warn('No datacenter filter applied')
+      }
       if (clusterName && datacenterName) {
+        console.warn('Filtering VMs by cluster and datacenter:', clusterName, datacenterName)
         const isNoCluster = clusterName.startsWith('no-cluster-')
         if (isNoCluster) {
           const datacenterClusterNames = new Set<string>()
-
+          console.log('Identifying clusters in datacenter with no cluster specified:', datacenterName)
           clustersResponse.items.forEach((cluster) => {
             const annotations = (cluster.metadata as any)?.annotations || {}
             const clusterDC =
@@ -66,7 +76,7 @@ export const useVMwareMachinesQuery = ({
               datacenterClusterNames.add(cluster.metadata.name)
             }
           })
-
+          console.log('Clusters found in datacenter:', Array.from(datacenterClusterNames))
           filteredItems = vmResponse.items.filter((vm) => {
             const vmClusterLabel =
               vm.metadata?.labels?.['vjailbreak.k8s.pf9.io/vmware-cluster'] || ''
@@ -84,10 +94,11 @@ export const useVMwareMachinesQuery = ({
           })
 
           const expectedClusterLabel = selectedClusterResource?.metadata.name
-
+          console.log('Expected cluster label for filtering VMs:', expectedClusterLabel)
           if (expectedClusterLabel) {
             filteredItems = vmResponse.items.filter((vm) => {
               const vmClusterLabel = vm.metadata?.labels?.['vjailbreak.k8s.pf9.io/vmware-cluster']
+              console.log('Cluster Label:', vmClusterLabel)
               return vmClusterLabel === expectedClusterLabel
             })
           } else {

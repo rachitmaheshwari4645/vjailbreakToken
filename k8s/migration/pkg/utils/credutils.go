@@ -170,14 +170,25 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"Token":      string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	if fields["Token"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "Token" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
-
 	insecureStr := string(secret.Data["OS_INSECURE"])
 	insecure := strings.EqualFold(strings.TrimSpace(insecureStr), trueString)
 
@@ -188,6 +199,7 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		Password:   fields["Password"],
 		RegionName: fields["RegionName"],
 		TenantName: fields["TenantName"],
+		Token:      fields["Token"],
 		Insecure:   insecure,
 	}, nil
 }
@@ -473,13 +485,23 @@ func ValidateAndGetProviderClient(ctx context.Context, k3sclient client.Client,
 		return nil, fmt.Errorf("failed to create secure HTTP client")
 	}
 
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint: openstackCredential.AuthURL,
-		Username:         openstackCredential.Username,
-		Password:         openstackCredential.Password,
-		DomainName:       openstackCredential.DomainName,
-		TenantName:       openstackCredential.TenantName,
+	var authOpts gophercloud.AuthOptions
+	if openstackCredential.Token != "" {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			TokenID:          openstackCredential.Token,
+			DomainName:       openstackCredential.DomainName,
+		}
+	} else {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			Username:         openstackCredential.Username,
+			Password:         openstackCredential.Password,
+			DomainName:       openstackCredential.DomainName,
+			TenantName:       openstackCredential.TenantName,
+		}
 	}
+
 	if err := openstack.Authenticate(ctx, providerClient, authOpts); err != nil {
 		switch {
 		case strings.Contains(err.Error(), "401"):
@@ -697,7 +719,7 @@ func GetAndCreateAllVMs(ctx context.Context, scope *scope.VMwareCredsScope, data
 		return nil, nil, fmt.Errorf("failed to get vjailbreak settings: %w", err)
 	}
 	log.Info("Fetched vjailbreak settings for vcenter scan concurrency limit", "vcenter_scan_concurrency_limit", vjailbreakSettings.VCenterScanConcurrencyLimit)
-
+	log.Info("Datacebtners", "datacenter", datacenter)
 	// Determine which datacenters to scan
 	targetDatacenters := []string{}
 	if datacenter != "" {
@@ -754,7 +776,8 @@ func GetAndCreateAllVMs(ctx context.Context, scope *scope.VMwareCredsScope, data
 
 	// Pre-allocate vminfo slice
 	vminfo := make([]vjailbreakv1alpha1.VMInfo, 0, len(allVMs))
-
+	log.Info("Total VMs found across datacenters", "count", len(allVMs))
+	log.Info("Starting concurrent processing of VMs", "allVMs", allVMs)
 	for i := range allVMs {
 		// Acquire semaphore (blocks if 100 goroutines are already running)
 		semaphore <- struct{}{}
@@ -954,19 +977,32 @@ func AppendUnique(slice []string, values ...string) []string {
 // CreateOrUpdateVMwareMachine creates or updates a VMwareMachine object for the given VM
 func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	vmwcreds *vjailbreakv1alpha1.VMwareCreds, vminfo *vjailbreakv1alpha1.VMInfo, datacenter string) error {
+	log := log.FromContext(ctx)
 	sanitizedVMName, err := GetK8sCompatibleVMWareObjectName(vminfo.Name, vmwcreds.Name)
 	if err != nil {
 		return fmt.Errorf("failed to get VM name: %w", err)
 	}
+	var clusterK8sName string
 	esxiK8sName, err := GetK8sCompatibleVMWareObjectName(vminfo.ESXiName, vmwcreds.Name)
 	if err != nil {
 		return errors.Wrap(err, "failed to convert ESXi name to k8s name")
 	}
-	clusterK8sID := GetClusterK8sID(vminfo.ClusterName, datacenter)
-	clusterK8sName, err := GetK8sCompatibleVMWareObjectName(clusterK8sID, vmwcreds.Name)
-	if err != nil {
-		return errors.Wrap(err, "failed to convert cluster name to k8s name")
+	clusterList, err := FilterVMwareClustersForCreds(ctx, client, vmwcreds)
+	log.Info("Cluster List", "clusterlist", clusterList)
+	if len(clusterList.Items) > 0 {
+		clusterK8sName = clusterList.Items[0].GetObjectMeta().GetName()
+		log.Info("Using existing VMwareCluster", "clusterK8sName", clusterK8sName)
+
+	} else {
+		log.Info("Creating or updating VMwareMachine", "VMwareMachine", sanitizedVMName, "VMwareCreds", vmwcreds.Name)
+		log.Info("ESXi k8s compatible name", "esxiK8sName", esxiK8sName)
+		clusterK8sID := GetClusterK8sID(vminfo.ClusterName, datacenter)
+		clusterK8sName, err = GetK8sCompatibleVMWareObjectName(clusterK8sID, vmwcreds.Name)
+		if err != nil {
+			return errors.Wrap(err, "failed to convert cluster name to k8s name")
+		}
 	}
+	log.Info("Cluster k8s compatible name", "clusterK8sName", clusterK8sName)
 	// We need this flag because, there can be multiple VMwarecreds and each will
 	// trigger its own reconciliation loop,
 	// so we need to know if the object is new or not. if it is new we mark the migrated
@@ -982,11 +1018,11 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get VMwareMachine: %w", err)
 	}
-
+	log.Info("Fetched existing VMwareMachine", "VMwareMachine", vmwvmKey.Name, "error", err)
 	for _, data := range vmwvm.Spec.VMInfo.RDMDisks {
 		if !slices.Contains(vminfo.RDMDisks, data) {
 			vminfo.RDMDisks = append(vminfo.RDMDisks, data)
-			log.FromContext(ctx).Info("RDM disk cannot be removed from VM, delete vmware custom resource if wanted to exclude rdm disks after detachment from VM and remove owner VM's reference from RDM disk.", "Disk: ", data, " VM: ", vminfo.Name)
+			log.Info("RDM disk cannot be removed from VM, delete vmware custom resource if wanted to exclude rdm disks after detachment from VM and remove owner VM's reference from RDM disk.", "Disk: ", data, " VM: ", vminfo.Name)
 		}
 	}
 
@@ -1010,6 +1046,7 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 				VMInfo: *vminfo,
 			},
 		}
+		log.Info("Creating new VMwareMachine", "VMwareMachine", vmwvmKey.Name)
 		// Create the new object
 		if err := client.Create(ctx, vmwvm); err != nil {
 			return fmt.Errorf("failed to create VMwareMachine: %w", err)
@@ -1018,6 +1055,8 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	} else {
 		// Initialize labels map if needed
 		label := fmt.Sprintf("%s-%s", constants.VMwareCredsLabel, vmwcreds.Name)
+		log.Info("Updating existing VMwareMachine", "VMwareMachine", vmwvmKey.Name)
+		log.Info("Labels are", "Label", label)
 		currentOSFamily := vmwvm.Spec.VMInfo.OSFamily
 		// Check if label already exists with same value
 		if vmwvm.Labels == nil || vmwvm.Labels[label] != trueString {
@@ -1033,7 +1072,8 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 		}
 		// Set the new label
 		vmwvm.Labels[constants.VMwareCredsLabel] = vmwcreds.Name
-
+		log.Info("Comparing existing VMwareMachine Spec with new VMInfo for updates", "VMwareMachine", vmwvm)
+		// Compare existing Spec with new VMInfo
 		if !reflect.DeepEqual(vmwvm.Spec.VMInfo, *vminfo) || !reflect.DeepEqual(vmwvm.Labels[constants.ESXiNameLabel], esxiK8sName) || !reflect.DeepEqual(vmwvm.Labels[constants.VMwareClusterLabel], clusterK8sName) {
 			// update vminfo in case the VM has been moved by vMotion
 			assignedIP := ""
@@ -1095,6 +1135,8 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 // CreateOrUpdateLabel creates or updates a label on a VMwareMachine resource
 func CreateOrUpdateLabel(ctx context.Context, client client.Client,
 	vmwvm *vjailbreakv1alpha1.VMwareMachine, key, value string) error {
+	log := log.FromContext(ctx)
+	log.Info("Key List = ", "keyList", key)
 	_, err := controllerutil.CreateOrUpdate(ctx, client, vmwvm, func() error {
 		if vmwvm.Labels == nil {
 			vmwvm.Labels = make(map[string]string)
@@ -1118,6 +1160,8 @@ func FilterVMwareMachinesForCreds(ctx context.Context, k8sClient client.Client,
 	if err := k8sClient.List(ctx, &vmList, client.InNamespace(constants.NamespaceMigrationSystem), client.MatchingLabels{constants.VMwareCredsLabel: vmwcreds.Name}); err != nil {
 		return nil, errors.Wrap(err, "Error listing VMs")
 	}
+	log := log.FromContext(ctx)
+	log.Info("VM List = ", "vmList", vmList)
 	return &vmList, nil
 }
 
@@ -1127,6 +1171,8 @@ func FilterVMwareHostsForCreds(ctx context.Context, k8sClient client.Client, vmw
 	if err := k8sClient.List(ctx, &hostList, client.InNamespace(constants.NamespaceMigrationSystem), client.MatchingLabels{constants.VMwareCredsLabel: vmwcreds.Name}); err != nil {
 		return nil, errors.Wrap(err, "Error listing VMs")
 	}
+	log := log.FromContext(ctx)
+	log.Info("Host List = ", "hostList", hostList)
 	return &hostList, nil
 }
 
@@ -1136,6 +1182,8 @@ func FilterVMwareClustersForCreds(ctx context.Context, k8sClient client.Client, 
 	if err := k8sClient.List(ctx, &clusterList, client.InNamespace(constants.NamespaceMigrationSystem), client.MatchingLabels{constants.VMwareCredsLabel: vmwcreds.Name}); err != nil {
 		return nil, errors.Wrap(err, "Error listing VMs")
 	}
+	log := log.FromContext(ctx)
+	log.Info("Cluster List = ", "clusterList", clusterList)
 	return &clusterList, nil
 }
 
@@ -1607,6 +1655,7 @@ func GetFinderForVMwareCreds(ctx context.Context, k3sclient client.Client, vmwcr
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find datacenter: %w", err)
 		}
+
 		finder.SetDatacenter(dc)
 	}
 	return c, finder, nil
@@ -1641,6 +1690,7 @@ func processSingleVM(ctx context.Context, scope *scope.VMwareCredsScope, vm *obj
 		appendToVMErrorsThreadSafe(errMu, vmErrors, vm.Name(), fmt.Errorf("failed to get VM properties: %w", err))
 		return
 	}
+	log.Info("VM Configs is ", "vmConfig", vmProps.Config)
 	if vmProps.Config == nil {
 		// VM is not powered on or is in creating state
 		log.Info("VM properties not available for vm, skipping this VM", "VM NAME", vm.Name())
@@ -1657,6 +1707,7 @@ func processSingleVM(ctx context.Context, scope *scope.VMwareCredsScope, vm *obj
 	}
 	// Get basic RDM disk info from VM properties
 	hostStorageInfo, err := getHostStorageDeviceInfo(ctx, vm, &hostStorageMap)
+	log.Info("Host Storage Info is ", "hostStorageInfo", hostStorageInfo)
 	if err != nil {
 		appendToVMErrorsThreadSafe(errMu, vmErrors, vm.Name(), fmt.Errorf("failed to get disk info for vm: %w", err))
 		return
@@ -1664,6 +1715,7 @@ func processSingleVM(ctx context.Context, scope *scope.VMwareCredsScope, vm *obj
 
 	attributes := strings.Split(vmProps.Summary.Config.Annotation, "\n")
 	pc := property.DefaultCollector(c)
+	log.Info("Processing disks for VM", "VM NAME", vmProps.Config.Hardware.Device)
 	for _, device := range vmProps.Config.Hardware.Device {
 		disk, ok := device.(*types.VirtualDisk)
 		if !ok {
