@@ -19,7 +19,7 @@ endif
 VERSION = $(RELEASE_VER)-$(GIT_SHA)
 
 export REGISTRY ?= quay.io
-export REPO ?= platform9
+export REPO ?= rachitmhes
 export TAG ?= $(VERSION)
 export UI_IMG ?= ${REGISTRY}/${REPO}/vjailbreak-ui:${TAG}
 export V2V_IMG ?= ${REGISTRY}/${REPO}/v2v-helper:${TAG}

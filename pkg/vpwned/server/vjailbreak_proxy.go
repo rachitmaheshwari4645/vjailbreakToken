@@ -43,6 +43,7 @@ type OpenstackCredsinfo struct {
 	TenantName string `json:"tenant_name"`
 	RegionName string `json:"region_name"`
 	Insecure   bool   `json:"insecure"`
+	Token      string `json:"token"`
 }
 
 func (p *vjailbreakProxy) ValidateOpenstackIp(ctx context.Context, in *api.ValidateOpenstackIpRequest) (*api.ValidateOpenstackIpResponse, error) {
@@ -160,12 +161,23 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"Token":      string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			logrus.WithFields(logrus.Fields{"func": fn, "missing_field": key, "secret": secretName}).Error("Missing field in OpenStack secret")
-			return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	if fields["Token"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "Token" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
 
@@ -180,6 +192,7 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		RegionName: fields["RegionName"],
 		TenantName: fields["TenantName"],
 		Insecure:   insecure,
+		Token:      fields["Token"],
 	}, nil
 }
 

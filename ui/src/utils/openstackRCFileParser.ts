@@ -2,14 +2,8 @@
  * Utility functions for parsing and validating OpenStack RC files
  */
 
-export const REQUIRED_OPENSTACK_FIELDS = [
-  'OS_AUTH_URL',
-  'OS_DOMAIN_NAME',
-  'OS_USERNAME',
-  'OS_PASSWORD',
-  'OS_REGION_NAME',
-  'OS_TENANT_NAME'
-] as const
+const baseRequiredFields = ['OS_AUTH_URL','OS_DOMAIN_NAME','OS_REGION_NAME','OS_TENANT_NAME'];
+const passwordAuthFields = ['OS_USERNAME','OS_PASSWORD'];
 
 export interface ParseRCFileResult {
   success: boolean
@@ -65,13 +59,19 @@ export function validateRCFileFields(fields: Record<string, string>): {
   valid: boolean
   missingFields: string[]
 } {
-  const missingFields = REQUIRED_OPENSTACK_FIELDS.filter(
-    (field) => !fields[field] || fields[field].trim() === ''
-  )
+  const hasToken = fields['OS_TOKEN'] && fields['OS_TOKEN'].trim() !== '';
+
+  const dynamicRequiredFields = hasToken
+    ? baseRequiredFields                      // Token auth
+    : [...baseRequiredFields, ...passwordAuthFields]; // Username/password auth
+
+  const missingFields = dynamicRequiredFields.filter(
+    (f) => !fields[f] || fields[f].trim() === ''
+  );
 
   return {
     valid: missingFields.length === 0,
-    missingFields
+     missingFields: missingFields
   }
 }
 

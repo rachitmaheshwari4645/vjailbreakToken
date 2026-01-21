@@ -77,7 +77,7 @@ type MigrationPlanReconciler struct {
 var migrationPlanFinalizer = "migrationplan.vjailbreak.pf9.io/finalizer"
 
 // The default image. This is replaced by Go linker flags in the Dockerfile
-var v2vimage = "platform9/v2v-helper:v0.1"
+var v2vimage = "rachitmhes/v2v-helper:99.99.99-6d11e1b-6d11e1"
 
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;update;patch
@@ -1547,7 +1547,7 @@ func (r *MigrationPlanReconciler) TriggerMigration(ctx context.Context,
 		if arraycreds != nil {
 			arraycredsSecretRef = arraycreds.Spec.SecretRef.Name
 		}
-
+		ctxlog.Info("arraycredsSecretRef", "name", arraycredsSecretRef)
 		err = r.CreateJob(ctx,
 			migrationplan,
 			migrationtemplate,

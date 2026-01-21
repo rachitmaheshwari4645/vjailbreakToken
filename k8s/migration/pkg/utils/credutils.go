@@ -30,9 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/projects"
-	netutils "github.com/platform9/vjailbreak/pkg/common/utils"
 	"github.com/platform9/vjailbreak/k8s/migration/pkg/constants"
 	scope "github.com/platform9/vjailbreak/k8s/migration/pkg/scope"
+	netutils "github.com/platform9/vjailbreak/pkg/common/utils"
 	"github.com/platform9/vjailbreak/v2v-helper/pkg/k8sutils"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
@@ -170,11 +170,23 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		"Password":   string(secret.Data["OS_PASSWORD"]),
 		"TenantName": string(secret.Data["OS_TENANT_NAME"]),
 		"RegionName": string(secret.Data["OS_REGION_NAME"]),
+		"Token":      string(secret.Data["OS_TOKEN"]),
 	}
 
-	for key, value := range fields {
-		if value == "" {
-			return vjailbreakv1alpha1.OpenStackCredsInfo{}, errors.Errorf("%s is missing in secret '%s'", key, secretName)
+	if fields["Token"] != "" {
+		required := []string{"AuthURL", "DomainName", "TenantName", "RegionName"}
+		for _, key := range required {
+			if fields[key] == "" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
+		}
+	} else {
+		for key, value := range fields {
+			if value == "" && key != "Token" {
+				return vjailbreakv1alpha1.OpenStackCredsInfo{},
+					fmt.Errorf("field %s is empty or missing in secret", key)
+			}
 		}
 	}
 
@@ -189,6 +201,7 @@ func GetOpenstackCredentialsFromSecret(ctx context.Context, k3sclient client.Cli
 		RegionName: fields["RegionName"],
 		TenantName: fields["TenantName"],
 		Insecure:   insecure,
+		Token:      fields["Token"],
 	}, nil
 }
 
@@ -473,12 +486,21 @@ func ValidateAndGetProviderClient(ctx context.Context, k3sclient client.Client,
 		return nil, fmt.Errorf("failed to create secure HTTP client")
 	}
 
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint: openstackCredential.AuthURL,
-		Username:         openstackCredential.Username,
-		Password:         openstackCredential.Password,
-		DomainName:       openstackCredential.DomainName,
-		TenantName:       openstackCredential.TenantName,
+	var authOpts gophercloud.AuthOptions
+	if openstackCredential.Token != "" {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			TokenID:          openstackCredential.Token,
+			DomainName:       openstackCredential.DomainName,
+		}
+	} else {
+		authOpts = gophercloud.AuthOptions{
+			IdentityEndpoint: openstackCredential.AuthURL,
+			Username:         openstackCredential.Username,
+			Password:         openstackCredential.Password,
+			DomainName:       openstackCredential.DomainName,
+			TenantName:       openstackCredential.TenantName,
+		}
 	}
 	if err := openstack.Authenticate(ctx, providerClient, authOpts); err != nil {
 		switch {
@@ -955,6 +977,8 @@ func AppendUnique(slice []string, values ...string) []string {
 func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	vmwcreds *vjailbreakv1alpha1.VMwareCreds, vminfo *vjailbreakv1alpha1.VMInfo, datacenter string) error {
 	sanitizedVMName, err := GetK8sCompatibleVMWareObjectName(vminfo.Name, vmwcreds.Name)
+	var clusterK8sName string
+	log := log.FromContext(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get VM name: %w", err)
 	}
@@ -962,11 +986,22 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	if err != nil {
 		return errors.Wrap(err, "failed to convert ESXi name to k8s name")
 	}
-	clusterK8sID := GetClusterK8sID(vminfo.ClusterName, datacenter)
-	clusterK8sName, err := GetK8sCompatibleVMWareObjectName(clusterK8sID, vmwcreds.Name)
-	if err != nil {
-		return errors.Wrap(err, "failed to convert cluster name to k8s name")
+	clusterList, err := FilterVMwareClustersForCreds(ctx, client, vmwcreds)
+	log.Info("Cluster List", "clusterlist", clusterList)
+	if len(clusterList.Items) > 0 {
+		clusterK8sName = clusterList.Items[0].GetObjectMeta().GetName()
+		log.Info("Using existing VMwareCluster", "clusterK8sName", clusterK8sName)
+
+	} else {
+		log.Info("Creating or updating VMwareMachine", "VMwareMachine", sanitizedVMName, "VMwareCreds", vmwcreds.Name)
+		log.Info("ESXi k8s compatible name", "esxiK8sName", esxiK8sName)
+		clusterK8sID := GetClusterK8sID(vminfo.ClusterName, datacenter)
+		clusterK8sName, err = GetK8sCompatibleVMWareObjectName(clusterK8sID, vmwcreds.Name)
+		if err != nil {
+			return errors.Wrap(err, "failed to convert cluster name to k8s name")
+		}
 	}
+	log.Info("Cluster k8s compatible name", "clusterK8sName", clusterK8sName)
 	// We need this flag because, there can be multiple VMwarecreds and each will
 	// trigger its own reconciliation loop,
 	// so we need to know if the object is new or not. if it is new we mark the migrated
@@ -986,7 +1021,7 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	for _, data := range vmwvm.Spec.VMInfo.RDMDisks {
 		if !slices.Contains(vminfo.RDMDisks, data) {
 			vminfo.RDMDisks = append(vminfo.RDMDisks, data)
-			log.FromContext(ctx).Info("RDM disk cannot be removed from VM, delete vmware custom resource if wanted to exclude rdm disks after detachment from VM and remove owner VM's reference from RDM disk.", "Disk: ", data, " VM: ", vminfo.Name)
+			log.Info("RDM disk cannot be removed from VM, delete vmware custom resource if wanted to exclude rdm disks after detachment from VM and remove owner VM's reference from RDM disk.", "Disk: ", data, " VM: ", vminfo.Name)
 		}
 	}
 

@@ -17,6 +17,7 @@ interface OpenstackCredsParams {
   OS_TENANT_NAME?: string
   OS_INSECURE?: string
   existingCredName?: string
+  OS_TOKEN?:string
 }
 
 export const createOpenstackCredsJson = (params: OpenstackCredsParams) => {
@@ -30,6 +31,7 @@ export const createOpenstackCredsJson = (params: OpenstackCredsParams) => {
     OS_REGION_NAME,
     OS_TENANT_NAME,
     OS_INSECURE,
+    OS_TOKEN,
     existingCredName
   } = params || {}
 
@@ -53,7 +55,8 @@ export const createOpenstackCredsJson = (params: OpenstackCredsParams) => {
       OS_PASSWORD,
       OS_REGION_NAME,
       OS_TENANT_NAME,
-      OS_INSECURE: getBooleanValue(OS_INSECURE)
+      OS_INSECURE: getBooleanValue(OS_INSECURE),
+      OS_TOKEN,
     }
   }
 }
@@ -64,25 +67,46 @@ interface OpenstackCreds {
   OS_PASSWORD: string
   OS_PROJECT_NAME?: string
   OS_PROJECT_DOMAIN_NAME?: string
+  OS_TOKEN: string
 }
 
 export const createOpenstackTokenRequestBody = (creds: OpenstackCreds) => {
-  return {
-    auth: {
-      identity: {
-        methods: ['password'],
-        password: {
-          user: {
-            name: creds.OS_USERNAME,
-            domain: { name: creds.OS_USER_DOMAIN_NAME || 'default' },
-            password: creds.OS_PASSWORD
+  // If token exists — do NOT require username/password
+  if (creds.OS_TOKEN && creds.OS_TOKEN.trim() !== '') {
+    return {
+      auth: {
+        identity: {
+          methods: ['token'],
+          token: {
+            id: creds.OS_TOKEN
+          }
+        },
+        scope: {
+          project: {
+            name: creds.OS_PROJECT_NAME || 'service',
+            domain: { name: creds.OS_PROJECT_DOMAIN_NAME || 'default' }
           }
         }
-      },
-      scope: {
-        project: {
-          name: creds.OS_PROJECT_NAME || 'service',
-          domain: { name: creds.OS_PROJECT_DOMAIN_NAME || 'default' }
+      }
+    }
+  }else {
+    return {
+      auth: {
+        identity: {
+          methods: ['password'],
+          password: {
+            user: {
+              name: creds.OS_USERNAME,
+              domain: { name: creds.OS_USER_DOMAIN_NAME || 'default' },
+              password: creds.OS_PASSWORD
+            }
+          }
+        },
+        scope: {
+          project: {
+            name: creds.OS_PROJECT_NAME || 'service',
+            domain: { name: creds.OS_PROJECT_DOMAIN_NAME || 'default' }
+          }
         }
       }
     }

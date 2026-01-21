@@ -1040,6 +1040,12 @@ spec:
                 - RescanningStorage
                 - XCOPYInProgress
                 type: string
+              retryable:
+                description: |-
+                  Retryable indicates whether this migration can be retried when it fails.
+                  Set to false for VMs with RDM (Raw Device Mapping) disks that share storage,
+                  as RDM disk migration state prevents automatic retry.
+                type: boolean
               totalDisks:
                 description: TotalDisks is the total number of disks to be migrated
                 type: integer
@@ -4131,7 +4137,7 @@ spec:
         envFrom:
         - configMapRef:
             name: pf9-env
-        image: quay.io/platform9/vjailbreak-controller:v0.3.8
+        image: quay.io/rachitmhes/vjailbreak-controller:99.99.99-6d11e1b-6d11e1b
         imagePullPolicy: IfNotPresent
         lifecycle:
           preStop:
@@ -4214,7 +4220,7 @@ spec:
       - envFrom:
         - configMapRef:
             name: pf9-env
-        image: quay.io/platform9/vjailbreak-vpwned:v0.3.8
+        image: quay.io/rachitmhes/vjailbreak-vpwned:99.99.99-6d11e1b-6d11e1b
         imagePullPolicy: IfNotPresent
         name: vpwned
         ports:

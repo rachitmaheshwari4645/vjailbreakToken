@@ -55,11 +55,24 @@ type OpenstackOperations interface {
 }
 
 func validateOpenStack(ctx context.Context, insecure bool) (*utils.OpenStackClients, error) {
-	opts, err := openstack.AuthOptionsFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get OpenStack auth options: %s", err)
+	var opts gophercloud.AuthOptions
+	token := os.Getenv("OS_TOKEN")
+	utils.PrintLog(fmt.Sprintf("Using OpenStack token from environment variables: %s", token))
+	if token != "" {
+		var err error
+		opts, err = AuthOptionsUsingTokenFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get OpenStack auth options using token: %s", err)
+		}
+	} else {
+		var err error
+		opts, err = openstack.AuthOptionsFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get OpenStack auth options: %s", err)
+		}
+		opts.AllowReauth = true
 	}
-	opts.AllowReauth = true
+
 	providerClient, err := openstack.NewClient(opts.IdentityEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider client: %s", err)
@@ -77,6 +90,7 @@ func validateOpenStack(ctx context.Context, insecure bool) (*utils.OpenStackClie
 	// Connection Retry Block
 	for i := 0; i < constants.MaxIntervalCount; i++ {
 		err = openstack.Authenticate(ctx, providerClient, opts)
+
 		if err == nil {
 			break
 		}
@@ -121,4 +135,70 @@ func NewOpenStackClients(ctx context.Context, insecure bool) (*utils.OpenStackCl
 		return nil, fmt.Errorf("failed to validate OpenStack connection: %s", err)
 	}
 	return ostackclients, nil
+}
+
+func AuthOptionsUsingTokenFromEnv() (gophercloud.AuthOptions, error) {
+	authURL := os.Getenv("OS_AUTH_URL")
+	tenantID := os.Getenv("OS_TENANT_ID")
+	tenantName := os.Getenv("OS_TENANT_NAME")
+	domainID := os.Getenv("OS_DOMAIN_ID")
+	domainName := os.Getenv("OS_DOMAIN_NAME")
+	applicationCredentialID := os.Getenv("OS_APPLICATION_CREDENTIAL_ID")
+	applicationCredentialName := os.Getenv("OS_APPLICATION_CREDENTIAL_NAME")
+	applicationCredentialSecret := os.Getenv("OS_APPLICATION_CREDENTIAL_SECRET")
+	systemScope := os.Getenv("OS_SYSTEM_SCOPE")
+	var nilOptions = gophercloud.AuthOptions{}
+	// If OS_PROJECT_ID is set, overwrite tenantID with the value.
+	if v := os.Getenv("OS_PROJECT_ID"); v != "" {
+		tenantID = v
+	}
+
+	// If OS_PROJECT_NAME is set, overwrite tenantName with the value.
+	if v := os.Getenv("OS_PROJECT_NAME"); v != "" {
+		tenantName = v
+	}
+
+	if authURL == "" {
+		err := gophercloud.ErrMissingEnvironmentVariable{
+			EnvironmentVariable: "OS_AUTH_URL",
+		}
+		return nilOptions, err
+	}
+
+	if (applicationCredentialID != "" || applicationCredentialName != "") && applicationCredentialSecret == "" {
+		err := gophercloud.ErrMissingEnvironmentVariable{
+			EnvironmentVariable: "OS_APPLICATION_CREDENTIAL_SECRET",
+		}
+		return nilOptions, err
+	}
+
+	if domainID == "" && domainName == "" && tenantID == "" && tenantName != "" {
+		err := gophercloud.ErrMissingEnvironmentVariable{
+			EnvironmentVariable: "OS_PROJECT_ID",
+		}
+		return nilOptions, err
+	}
+
+	var scope *gophercloud.AuthScope
+	if systemScope == "all" {
+		scope = &gophercloud.AuthScope{
+			System: true,
+		}
+	}
+
+	ao := gophercloud.AuthOptions{
+		IdentityEndpoint:            authURL,
+		TenantID:                    tenantID,
+		TenantName:                  tenantName,
+		DomainID:                    domainID,
+		DomainName:                  domainName,
+		ApplicationCredentialID:     applicationCredentialID,
+		ApplicationCredentialName:   applicationCredentialName,
+		ApplicationCredentialSecret: applicationCredentialSecret,
+		Scope:                       scope,
+		TokenID:                     os.Getenv("OS_TOKEN"),
+		AllowReauth:                 false,
+	}
+
+	return ao, nil
 }
