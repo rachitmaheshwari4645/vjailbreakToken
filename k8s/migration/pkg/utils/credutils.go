@@ -987,7 +987,6 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 		return errors.Wrap(err, "failed to convert ESXi name to k8s name")
 	}
 	clusterList, err := FilterVMwareClustersForCreds(ctx, client, vmwcreds)
-	log.Info("Cluster List", "clusterlist", clusterList)
 	if len(clusterList.Items) > 0 {
 		clusterK8sName = clusterList.Items[0].GetObjectMeta().GetName()
 		log.Info("Using existing VMwareCluster", "clusterK8sName", clusterK8sName)
@@ -1001,7 +1000,6 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 			return errors.Wrap(err, "failed to convert cluster name to k8s name")
 		}
 	}
-	log.Info("Cluster k8s compatible name", "clusterK8sName", clusterK8sName)
 	// We need this flag because, there can be multiple VMwarecreds and each will
 	// trigger its own reconciliation loop,
 	// so we need to know if the object is new or not. if it is new we mark the migrated
