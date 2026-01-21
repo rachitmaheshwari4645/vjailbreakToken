@@ -988,12 +988,23 @@ func CreateOrUpdateVMwareMachine(ctx context.Context, client client.Client,
 	}
 	clusterList, err := FilterVMwareClustersForCreds(ctx, client, vmwcreds)
 	if len(clusterList.Items) > 0 {
-		clusterK8sName = clusterList.Items[0].GetObjectMeta().GetName()
-		log.Info("Using existing VMwareCluster", "clusterK8sName", clusterK8sName)
-
-	} else {
-		log.Info("Creating or updating VMwareMachine", "VMwareMachine", sanitizedVMName, "VMwareCreds", vmwcreds.Name)
-		log.Info("ESXi k8s compatible name", "esxiK8sName", esxiK8sName)
+		for _, cluster := range clusterList.Items {
+			dataCenter := cluster.GetAnnotations()
+			output := dataCenter[constants.VMwareDatacenterLabel]
+			host := cluster.Spec.Hosts
+			if output == datacenter {
+				for _, h := range host {
+					if strings.Contains(h, vminfo.ESXiName) {
+						clusterK8sName = cluster.GetObjectMeta().GetName()
+						log.Info("Using existing VMwareCluster", "clusterK8sName", clusterK8sName)
+						break
+					}
+				}
+			}
+		}
+	}
+	if clusterK8sName == "" {
+		log.Info("No matching VMwareCluster found for the VM's ESXi host and datacenter, deriving cluster name from VM info")
 		clusterK8sID := GetClusterK8sID(vminfo.ClusterName, datacenter)
 		clusterK8sName, err = GetK8sCompatibleVMWareObjectName(clusterK8sID, vmwcreds.Name)
 		if err != nil {
