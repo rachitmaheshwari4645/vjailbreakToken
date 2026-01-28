@@ -66,6 +66,33 @@ for iface in $NEW_IFACES; do
 done
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Network fix script completed" >> "$LOG_FILE"`
 
+	VMwareCleanupFirstBootScript = `#!/bin/bash 
+	
+log() { echo "[vjailbreak-vmware-cleanup] $*"; } 
+ 
+cleanup_dir() { 
+  local p="$1" 
+  if [[ -e "$p" ]]; then 
+    log "Deleting $p" 
+    rm -rf --one-file-system "$p" || true 
+  else 
+    log "Not present: $p" 
+  fi 
+} 
+ 
+cleanup_dir /etc/vmware-tools 
+cleanup_dir /var/lib/vmware 
+cleanup_dir /usr/lib/vmware-tools 
+cleanup_dir /usr/lib/open-vm-tools 
+ 
+if [[ -d /var/log ]]; then 
+  log "Deleting /var/log/vmware-* files" 
+  find /var/log -maxdepth 1 -type f -name 'vmware-*' -print -delete || true 
+fi 
+ 
+log "VMware leftovers cleanup complete" 
+`
+
 	MaxCPU = 9999999
 	MaxRAM = 9999999
 
